@@ -3,36 +3,10 @@ import sys, fitz, os
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QPushButton,
     QVBoxLayout, QWidget, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsRectItem, QHBoxLayout, QGraphicsTextItem, QGraphicsItem
+    QGraphicsRectItem, QHBoxLayout
 )
-from PyQt5.QtGui import QPixmap, QImage, QPen, QBrush, QColor, QFont
+from PyQt5.QtGui import QPixmap, QImage, QPen, QBrush, QColor
 from PyQt5.QtCore import Qt, QRectF
-
-# ---------- Text box item ----------
-# ---------- Text box item ----------
-class TextBoxItem(QGraphicsRectItem):
-    def __init__(self, text="Enter text", page_index=0):
-        super().__init__(0, 0, 150, 40)  # default size
-        self.page_index = page_index
-
-        # style like signature block
-        self.setBrush(QBrush(QColor(255, 255, 255, 40)))
-        self.setPen(QPen(QColor(0, 0, 0, 180), 1, Qt.DashLine))
-        self.setFlags(
-            QGraphicsItem.ItemIsMovable |
-            QGraphicsItem.ItemIsSelectable |
-            QGraphicsItem.ItemSendsGeometryChanges
-        )
-
-        # the editable text item inside
-        self.text_item = QGraphicsTextItem(text, self)
-        self.text_item.setDefaultTextColor(QColor(0, 0, 0))
-        self.text_item.setFont(QFont("Arial", 12))
-        self.text_item.setTextInteractionFlags(Qt.TextEditorInteraction)
-        self.text_item.setPos(2, 2)  # small margin inside box
-
-    def toPlainText(self):
-        return self.text_item.toPlainText()
 
 # ---------- Draggable preview rectangle ----------
 class DragRect(QGraphicsRectItem):
@@ -87,6 +61,7 @@ class DragRect(QGraphicsRectItem):
             self.on_activate(self.tag)
         super().mouseDoubleClickEvent(ev)
 
+
 # ---------- PDF viewer ----------
 class PDFViewer(QGraphicsView):
     def __init__(self):
@@ -97,7 +72,7 @@ class PDFViewer(QGraphicsView):
         self.pdf_path = None
         self.page_index = 0
         self.image_item = None
-        self.rects = []  # DragRect and TextBoxItem overlays
+        self.rects = []  # DragRect overlays
 
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -145,15 +120,13 @@ class PDFViewer(QGraphicsView):
         self.setSceneRect(self.image_item.boundingRect())
         self.fitInView(self.image_item, Qt.KeepAspectRatio)
 
-        # visibility per page
+        # show signature rects only on their own page; others stay visible
         for r in self.rects:
             if isinstance(r, DragRect):
                 if r.tag == "signature":
                     r.setVisible(r.page_index == self.page_index)
                 else:
                     r.setVisible(True)
-            elif isinstance(r, TextBoxItem):
-                r.setVisible(r.page_index == self.page_index)
 
     def add_drag_rect(self, w=180, h=60, tag="sig", on_activate=None):
         if not self.image_item: return None
@@ -161,6 +134,7 @@ class PDFViewer(QGraphicsView):
         r.setZValue(10)
         self.scene.addItem(r)
         self.rects.append(r)
+        # visibility rule on creation
         if tag == "signature":
             r.setVisible(r.page_index == self.page_index)
         return r
@@ -176,6 +150,7 @@ class PDFViewer(QGraphicsView):
                 pass
         self.scene.update()
         self.viewport().update()
+
 
 # ---------- Main window ----------
 class MainWindow(QMainWindow):
@@ -210,12 +185,6 @@ class MainWindow(QMainWindow):
         self.add_other_btn.setToolTip("like a QR code or watermark")
         self.add_other_btn.clicked.connect(self.choose_other)
 
-        self.add_text_btn = QPushButton("Add textbox")
-        self.add_text_btn.clicked.connect(self.add_textbox)
-
-        self.remove_text_btn = QPushButton("Remove textbox")
-        self.remove_text_btn.clicked.connect(self.remove_textbox)
-
         self.remove_sig_btn  = QPushButton("Remove signature"); self.remove_sig_btn.clicked.connect(lambda: self.remove_tag("signature"))
         self.remove_init_btn = QPushButton("Remove initials");  self.remove_init_btn.clicked.connect(lambda: self.remove_tag("initials"))
         self.remove_other_btn= QPushButton("Remove other stamps"); self.remove_other_btn.clicked.connect(lambda: self.remove_tag("other"))
@@ -230,7 +199,6 @@ class MainWindow(QMainWindow):
         btns = QHBoxLayout()
         for b in (self.open_btn, self.first_btn, self.prev_btn, self.next_btn, self.last_btn,
                   self.add_initials_btn, self.add_fullsig_btn, self.add_other_btn,
-                  self.add_text_btn, self.remove_text_btn,
                   self.remove_init_btn, self.remove_sig_btn, self.remove_other_btn,
                   self.save_btn):
             btns.addWidget(b)
@@ -274,27 +242,6 @@ class MainWindow(QMainWindow):
             print("OTHER_STAMP_SET", p)
             rect = self.viewer.add_drag_rect(120, 120, "other", on_activate=self.activate_box)
             if rect: rect.set_preview(p)
-
-    def add_textbox(self):
-        if not self.viewer.image_item:
-            return
-        tb = TextBoxItem("Comment", page_index=self.viewer.page_index)
-        tb.setZValue(12)
-        tb.setPos(50, 50)
-        self.viewer.scene.addItem(tb)
-        self.viewer.rects.append(tb)
-        print("ADDED_TEXTBOX", self.viewer.page_index)
-
-    def remove_textbox(self):
-        for r in list(self.viewer.rects):
-            if isinstance(r, TextBoxItem) and r.isSelected():
-                if r.scene() is self.viewer.scene:
-                    self.viewer.scene.removeItem(r)
-                try:
-                    self.viewer.rects.remove(r)
-                except ValueError:
-                    pass
-                print("REMOVED_TEXTBOX", r.page_index)
 
     def activate_box(self, tag):
         if tag == "initials":
@@ -342,27 +289,20 @@ class MainWindow(QMainWindow):
 
         doc = fitz.open(self.viewer.pdf_path)
 
-        def item_scene_rect(rect_item):
-            # DragRect has .rect(), TextBoxItem has .boundingRect()
-            if isinstance(rect_item, DragRect):
-                r = rect_item.rect()
-            else:
-                r = rect_item.boundingRect()
-            return r.translated(rect_item.pos())
-
-        def map_rect_to_page(rect_item, target_page_idx: int):
-            src_page_idx = getattr(rect_item, "page_index", self.viewer.page_index)
+        def map_rect_to_page(rect_item: DragRect, target_page_idx: int):
+            src_page_idx = rect_item.page_index
             src_page = doc.load_page(src_page_idx)
             tgt_page = doc.load_page(target_page_idx)
             src_pix = src_page.get_pixmap()
-            tgt_rect = tgt_page.rect
+            tgt_pix = tgt_page.get_pixmap()
 
-            r_scene: QRectF = item_scene_rect(rect_item)
+            r_scene: QRectF = rect_item.rect().translated(rect_item.pos())
             x_norm = r_scene.x() / float(src_pix.width)
             y_norm = r_scene.y() / float(src_pix.height)
             w_norm = r_scene.width() / float(src_pix.width)
             h_norm = r_scene.height() / float(src_pix.height)
 
+            tgt_rect = tgt_page.rect
             x_pts = x_norm * tgt_rect.width
             y_pts = y_norm * tgt_rect.height
             w_pts = w_norm * tgt_rect.width
@@ -370,7 +310,7 @@ class MainWindow(QMainWindow):
             return (tgt_page, fitz.Rect(x_pts, y_pts, x_pts + w_pts, y_pts + h_pts))
 
         # initials: apply to all pages (if placed once)
-        initials_rects = [r for r in self.viewer.rects if isinstance(r, DragRect) and r.tag == "initials" and self.initials_path]
+        initials_rects = [r for r in self.viewer.rects if r.tag == "initials" and self.initials_path]
         initials_src = initials_rects[0] if initials_rects else None
         if initials_src and os.path.isfile(self.initials_path):
             for i in range(len(doc)):
@@ -379,25 +319,19 @@ class MainWindow(QMainWindow):
 
         # signature & other: only on pages where placed
         if self.signature_path and os.path.isfile(self.signature_path):
-            for r in [r for r in self.viewer.rects if isinstance(r, DragRect) and r.tag == "signature"]:
+            for r in [r for r in self.viewer.rects if r.tag == "signature"]:
                 page, rect_pts = map_rect_to_page(r, r.page_index)
                 page.insert_image(rect_pts, filename=self.signature_path, keep_proportion=True, overlay=True)
 
         if self.other_stamp_path and os.path.isfile(self.other_stamp_path):
-            for r in [r for r in self.viewer.rects if isinstance(r, DragRect) and r.tag == "other"]:
+            for r in [r for r in self.viewer.rects if r.tag == "other"]:
                 page, rect_pts = map_rect_to_page(r, r.page_index)
                 page.insert_image(rect_pts, filename=self.other_stamp_path, keep_proportion=True, overlay=True)
-
-        # textboxes
-        for r in [r for r in self.viewer.rects if isinstance(r, TextBoxItem)]:
-            page, rect_pts = map_rect_to_page(r, r.page_index)
-            page.insert_textbox(rect_pts, r.toPlainText(),
-                                fontsize=12, fontname="helv",
-                                color=(0, 0, 0), align=0)
 
         doc.save(out_path, deflate=True)
         doc.close()
         print("SAVED", out_path)
+
 
 # ---------- run ----------
 if __name__ == "__main__":
